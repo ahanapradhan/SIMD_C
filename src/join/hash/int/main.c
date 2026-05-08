@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <immintrin.h>
 #include <windows.h>
+#include <psapi.h>
 
 
 #define CACHE_FLUSH_SIZE (64 * 1024 * 1024)  // 64 MB (safe)
@@ -29,6 +30,21 @@ typedef struct {
     int key;
     int value;
 } KV;
+
+
+double get_baseline_memory_MB(int table_size)
+{
+    double bytes = sizeof(KV) * table_size;
+    return bytes / (1024.0 * 1024.0);
+}
+
+double get_simd_memory_MB(int table_size)
+{
+    double table_bytes = sizeof(KV) * table_size;
+    double keys_bytes  = sizeof(int) * (table_size + 8);
+
+    return (table_bytes + keys_bytes) / (1024.0 * 1024.0);
+}
 
 #define EMPTY_KEY -1
 
@@ -173,9 +189,7 @@ void gen(KV* R, KV* S, int n) {
     }
 }
 
-/* ---------------- Main ---------------- */
-int main() {
-
+void do_work(void) {
     long sizes[] = {
         10000,
         50000,
@@ -193,7 +207,8 @@ int main() {
 
     int tests = sizeof(sizes)/sizeof(sizes[0]);
 
-    printf("Size,SIMD,Baseline\n");
+
+    printf("Size,SIMD_time,Baseline_time,SIMD_memMB,Baseline_memMB\n");
 
     for (int t = 0; t < tests; t++) {
 
@@ -210,18 +225,41 @@ int main() {
         long long m2 = join_simd(R, S, n);
         double t4 = now();
 
+
         init_flush_buffer();
         flush_cache();
         double t1 = now();
         long long m1 = join_baseline(R, S, n);
         double t2 = now();
 
-        printf("%d,%.6f,%.6f (%d)\n",
-               n, t2-t1, t4-t3, m1==m2);
+        // compute table size once (same logic as build_table)
+        int table_size = next_pow2(n * 2);
+
+        // ✅ theoretical memory
+        double simd_mem_MB = get_simd_memory_MB(table_size);
+        double baseline_mem_MB = get_baseline_memory_MB(table_size);
+
+
+        printf("%d,%.6f,%.6f,%.2f,%.2f\n",
+               n,
+               t4 - t3,
+               t2 - t1,
+               simd_mem_MB,
+               baseline_mem_MB
+        );
+
 
         free(R);
         free(S);
     }
+}
+
+/* ---------------- Main ---------------- */
+int main() {
+
+    for (int i = 0; i < 5; i++)
+        do_work();
 
     return 0;
 }
+
